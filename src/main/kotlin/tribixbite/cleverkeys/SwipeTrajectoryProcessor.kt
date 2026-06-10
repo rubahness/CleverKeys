@@ -301,6 +301,21 @@ class SwipeTrajectoryProcessor {
     private fun normalizeCoordinates(coordinates: List<PointF>, outNormalized: ArrayList<PointF>) {
         outNormalized.clear()
 
+        // --- per-key layout warp (handles offset / scaled / per-row-shifted layouts) ---
+        // Build the warp once from the live key anchors, then map every point straight
+        // into canonical QWERTY normalized space, so both the trajectory geometry and the
+        // downstream detectNearestKeys() snap stay layout-consistent. Falls through to the
+        // existing global-affine normalization below when anchors are missing (build()
+        // returns null) — e.g. before the layout has reported real key positions.
+        val warp = LayoutWarp.build(keyPositions)
+        if (warp != null) {
+            coordinates.forEach { p ->
+                val w = warp.apply(p.x, p.y, touchYOffset)
+                outNormalized.add(TrajectoryObjectPool.obtainPointF(w.x, w.y))
+            }
+            return
+        }
+
         // CRITICAL: Check if keyboard dimensions are set correctly
         // If still at default 1.0f, coordinates won't normalize properly
         if (keyboardWidth <= 1.0f || keyboardHeight <= 1.0f) {
