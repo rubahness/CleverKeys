@@ -3730,7 +3730,13 @@ class SettingsActivity : ComponentActivity(), SharedPreferences.OnSharedPreferen
                     // Primary Language selector - any QWERTY-compatible language
                     // NN outputs 26 letters, dictionary provides accent recovery
                     // v1.1.94: Filter out "en" from availableSecondaryLanguages to avoid duplicate
-                    val primaryOptions = listOf("en") + availableSecondaryLanguages.filter { it != "en" }
+                    // Preserve the already-selected language even when it isn't in the live
+                    // available-dictionaries list (e.g. an imported pack whose code — "en-x" —
+                    // isn't matched here, or a stale/async list). Without this, indexOf returns
+                    // -1, coerceAtLeast(0) snaps the dropdown to "en", and the next tap would
+                    // overwrite the stored pref_primary_language with "en".
+                    val primaryOptions = (listOf("en") + availableSecondaryLanguages.filter { it != "en" })
+                        .let { if (primaryLanguage in it) it else it + primaryLanguage }
                     val primaryDisplayOptions = primaryOptions.map { getLanguageDisplayName(it) }
                     val primarySelectedIndex = primaryOptions.indexOf(primaryLanguage).coerceAtLeast(0)
 
