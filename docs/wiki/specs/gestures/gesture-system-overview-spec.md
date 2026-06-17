@@ -83,11 +83,15 @@ See `Pointers.kt:734-744` for the live implementation.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `short_gesture_min_distance` | Int | 15 | Min pixels for short swipe detection |
-| `short_gesture_max_distance` | Int | 50 | Max % of key hypotenuse for short swipe (above = long swipe) |
-| `tap_duration_threshold` | Long | 200 | Max ms for tap vs swipe distinction |
-| `swipe_speed_threshold` | Float | 0.4 | Min speed for swipe typing activation |
-| `circle_gesture_enabled` | Boolean | true | Enable circle gestures for double letters |
+| `short_gesture_min_distance` | Int | 28 | Min displacement to trigger a short swipe, as % of key diagonal |
+| `short_gesture_max_distance` | Int | 141 | **The single short/long boundary.** Max displacement-from-touch-down (% of key diagonal) a gesture may travel and still be a short swipe; beyond it the gesture is a long (neural word) swipe. Honored by **both** activation paths (see "Swipe Typing Activation"). The old "200 = disabled" label was never implemented in logic and has been retired — use the Enable Short Gestures toggle to disable short swipes. |
+| `tap_duration_threshold` | Long | 150 | Max ms a gesture that already left the key may last and still be classified as a tap (touch-up path only) |
+| `circle_sensitivity` | Int | (see Defaults.CIRCLE_SENSITIVITY) | Sensitivity for loop/circle gestures (there is **no** `circle_gesture_enabled` boolean — older drafts listed one that never existed) |
+| `swipe_dist` (→ `swipe_dist_px`) | String/Int | 23 | Device-scaled distance with two live roles: mid-move slider/event subkey activation gate, and the absolute cap on the short-swipe minimum for wide keys |
+
+> There is **no** `swipe_speed_threshold` / minimum-speed gate. (Older drafts of this spec listed one; it has never existed in code. Slow swipes are not rejected by speed — see the pause-recovery note in [Swipe Typing](../typing/swipe-typing-spec.md).)
+
+> **Unit safety:** the two percent thresholds are typed as `PercentOfKey` (`Units.kt`, a `@JvmInline value class` like Compose's `Dp`). Consumers must convert via `.toPx(keyDiagonalPx)` — comparing them against raw px displacement no longer compiles. Raw `prefs.get*` reads of gesture keys outside Config/settings/backup layers are rejected by `GesturePrefAccessDriftTest`.
 
 ## Public API
 
@@ -229,36 +233,27 @@ class Gesture {
 }
 ```
 
-### Swipe Typing Activation
+### Swipe Typing Activation — two paths, one boundary
 
-Long swipes trigger neural prediction when finger leaves starting key:
+A letter-key gesture can be promoted to a neural word swipe through **two** code paths. Both are gated on the same single displacement boundary (`hasLeftStartingKey`, i.e. `short_gesture_max_distance`), so they agree on where short ends and long begins.
+
+**Path A — mid-move latch** (`Pointers.kt:816-828`). While the finger moves, points feed `ImprovedSwipeGestureRecognizer`. When the recognizer reports `isSwipeTyping()` (>= 2 distinct letter keys **and** `swipe_min_distance` of accumulated path) **and** the finger has crossed the boundary (`ptr.hasLeftStartingKey`), the pointer latches `FLAG_P_SWIPE_TYPING`. Touch-up then completes the word via `onSwipeEnd` (`Pointers.kt:163-168`).
 
 ```kotlin
-private fun onTouchUp(ptr: Pointer) {
-    val gestureType = gestureClassifier.classify(GestureData(
-        hasLeftStartingKey = ptr.hasLeftStartingKey,
-        totalDistance = ptr.totalDistance,
-        timeElapsed = ptr.timeElapsed,
-        keyWidth = getKeyWidth(ptr.key)
-    ))
-
-    when (gestureType) {
-        GestureType.SWIPE -> {
-            if (ptr.hasLeftStartingKey) {
-                // Long swipe - neural prediction
-                onSwipeEnd(ptr.swipePath)
-            } else {
-                // Short swipe - sublabel action
-                val direction = calculateSwipeDirection(ptr.dx, ptr.dy)
-                handleShortGesture(ptr, direction)
-            }
-        }
-        GestureType.TAP -> {
-            handleTap(ptr.key)
-        }
-    }
+// Pointers.kt onTouchMove, after path collection
+if (_swipeRecognizer.isSwipeTyping() && ptr.hasLeftStartingKey) {
+    ptr.flags = ptr.flags or FLAG_P_SWIPE_TYPING   // commit to a word
+    stopLongPress(ptr)
 }
 ```
+
+The `&& ptr.hasLeftStartingKey` conjunct is the fix for the **overshoot bug**: `isSwipeTyping()` alone can be satisfied at ~half a key-width when a short directional swipe overshoots into an adjacent letter, which previously committed a word mid-gesture and bypassed the short/long boundary. Gating on the boundary keeps sub-threshold overshoots out of Path A so they reach the touch-up short-gesture decision.
+
+**Path B — touch-up classifier** (`Pointers.kt:289-343`), reached only when Path A did **not** latch. `GestureClassifier.classify()` (which also requires `hasLeftStartingKey`) decides TAP vs SWIPE; SWIPE on a char key calls `onSwipeEnd`, TAP falls to the short-gesture handler. In the short-gesture handler, a sub-boundary gesture that resolves to **no exact-direction subkey** but is a word candidate falls back to a neural word swipe — word candidates do not accept ±1-fuzzed corner matches (see [Short Swipes → No-Subkey Fallback](short-swipes-spec.md#no-subkey-fallback-to-word-swipe)).
+
+Because both paths require `hasLeftStartingKey`, `short_gesture_max_distance` is the one knob that moves the short/long boundary for the whole system. (The no-subkey fallback is the deliberate sub-boundary exception — an intent signal, not a second threshold.)
+
+`swipe_typing_enabled` gates **every** word route: the mid-move latch, Path B's classifier (a SWIPE classification is demoted to TAP when swipe typing is off — the gesture commits the starting key instead of silently dying in `onSwipeEnd`), the no-subkey fallback, and the return-trip rescue (both via the word-candidate check). See [Short Swipes](short-swipes-spec.md#no-subkey-fallback-to-word-swipe) for the latter two.
 
 ### Pointer State
 

@@ -472,6 +472,11 @@ class Config private constructor(
     @JvmField var clipboard_embed_enrich_enabled = false
     @JvmField var clipboard_custom_rules_enabled = false
     @JvmField var clipboard_custom_rules_uri: String? = null   // SAF persisted URI as String, null = no file picked
+    // When sanitization actually cleans a copied URL, also overwrite the Android system
+    // clipboard with the cleaned form so pastes from ANY app deliver the sanitized URL
+    // (not just CleverKeys' own clipboard panel). Default ON — only acts when a sanitize
+    // toggle is enabled AND a URL was actually changed, so it's a no-op otherwise.
+    @JvmField var clipboard_sanitize_system_clipboard = true
 
     // GIF Panel
     @JvmField var gif_enabled = Defaults.GIF_ENABLED
@@ -525,8 +530,11 @@ class Config private constructor(
 
     // Short gesture configuration
     @JvmField var short_gestures_enabled = false
-    @JvmField var short_gesture_min_distance = 0
-    @JvmField var short_gesture_max_distance = 100 // Max distance as % of key diagonal (50-200, 200=disabled)
+    // Unit-typed (PercentOfKey): consumers must convert via .toPx(keyDiagonal) — raw
+    // px-vs-percent comparisons no longer compile. (Value classes can't be @JvmField;
+    // the codebase is pure Kotlin, so nothing needed the Java field exposure.)
+    var short_gesture_min_distance = PercentOfKey(Defaults.SHORT_GESTURE_MIN_DISTANCE)
+    var short_gesture_max_distance = PercentOfKey(Defaults.SHORT_GESTURE_MAX_DISTANCE) // The short/long boundary (50-200): at/below = short swipe, beyond = word swipe. ("200=disabled" was a UI label that was never implemented; retired.)
 
     // Selection-delete mode configuration (backspace swipe+hold)
     @JvmField var selection_delete_vertical_threshold = 40  // % of key height to trigger vertical selection
@@ -752,6 +760,7 @@ class Config private constructor(
         clipboard_embed_enrich_enabled = _prefs.getBoolean("clipboard_embed_enrich_enabled", false)
         clipboard_custom_rules_enabled = _prefs.getBoolean("clipboard_custom_rules_enabled", false)
         clipboard_custom_rules_uri = _prefs.getString("clipboard_custom_rules_uri", null)
+        clipboard_sanitize_system_clipboard = _prefs.getBoolean("clipboard_sanitize_system_clipboard", true)
 
         // GIF Panel
         gif_enabled = _prefs.getBoolean("gif_enabled", Defaults.GIF_ENABLED)
@@ -803,8 +812,8 @@ class Config private constructor(
         swipe_rare_words_penalty = safeGetFloat(_prefs, "swipe_rare_words_penalty", Defaults.SWIPE_RARE_WORDS_PENALTY)
 
         short_gestures_enabled = _prefs.getBoolean("short_gestures_enabled", Defaults.SHORT_GESTURES_ENABLED)
-        short_gesture_min_distance = safeGetInt(_prefs, "short_gesture_min_distance", Defaults.SHORT_GESTURE_MIN_DISTANCE)
-        short_gesture_max_distance = safeGetInt(_prefs, "short_gesture_max_distance", Defaults.SHORT_GESTURE_MAX_DISTANCE)
+        short_gesture_min_distance = PercentOfKey(safeGetInt(_prefs, "short_gesture_min_distance", Defaults.SHORT_GESTURE_MIN_DISTANCE))
+        short_gesture_max_distance = PercentOfKey(safeGetInt(_prefs, "short_gesture_max_distance", Defaults.SHORT_GESTURE_MAX_DISTANCE))
 
         // Selection-delete mode configuration
         selection_delete_vertical_threshold = safeGetInt(_prefs, "selection_delete_vertical_threshold", Defaults.SELECTION_DELETE_VERTICAL_THRESHOLD)
@@ -924,6 +933,7 @@ class Config private constructor(
         clipboard_embed_enrich_enabled = _prefs.getBoolean("clipboard_embed_enrich_enabled", false)
         clipboard_custom_rules_enabled = _prefs.getBoolean("clipboard_custom_rules_enabled", false)
         clipboard_custom_rules_uri = _prefs.getString("clipboard_custom_rules_uri", null)
+        clipboard_sanitize_system_clipboard = _prefs.getBoolean("clipboard_sanitize_system_clipboard", true)
     }
 
     fun set_clipboard_pane_height_percent(percent: Int) {

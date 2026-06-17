@@ -1,5 +1,82 @@
 # CleverKeys TODO
 
+## ✅ Sanitized URL → system clipboard (2026-06-14, landed locally)
+
+Feature ask: "can the sanitized url be copied to system clipboard too?" Until now
+the sanitizer only rewrote CleverKeys' OWN clipboard history (read path in
+`ClipboardHistoryService.addClip` → `sanitizer().process`); the Android *system*
+clipboard kept the original, so a normal long-press→Paste in another app still
+leaked trackers. Now opt-in (default ON, gated by the new
+`clipboard_sanitize_system_clipboard` pref) write-back:
+- New pure helper `systemClipboardRewrite(original, processed, enabled): String?`
+  in `clipboard/sanitize/UrlSanitizer.kt` — returns the text to push back, or null.
+  Two guards: toggle on AND `processed != original` (the latter also terminates the
+  re-entrant listener loop, since re-sanitizing a clean URL is idempotent → null).
+- `addClip` calls it and, on non-null, posts `_cm.setPrimaryClip(...)` to the main
+  thread via `rewriteSystemClipboard` (best-effort; swallows the Android 10+
+  not-focused SecurityException like the read path).
+- New "Also clean system clipboard" toggle under Settings → Clipboard → URL handling
+  (default ON); note text updated; auto-indexed into search (136 entries now, was 135).
+- Config field + `refresh()` + `reloadSanitizationSettings()` reads (default true);
+  `SETTINGS_DEFAULTS` classifies the key (drift test green).
+- Tests: 3 new pure `systemClipboardRewrite` cases in UrlSanitizerTest (18/18 green);
+  new instrumented `systemClipboardRewrite_defaultsOn_andReloadsMidSession` (default+
+  mid-session reload). Pure suite 1271 green; debug+androidTest compile clean; release
+  APK built+installed. The actual cross-app paste write is best-effort and clipboard
+  *reads* are restricted for unfocused test processes → needs a manual on-device check.
+
+## ✅ Gesture routing audit fixes (2026-06-10, all landed locally)
+
+Audit of the short-swipe vs word-swipe boundary work found and fixed (one
+change per commit, TDD via `PointersGestureRoutingTest` on ew-cli Pixel7
+API34; 13 routing tests green; pure suite 1267 green):
+- `c8ee910a1` word candidates only accept exact-direction subkeys (±1 fuzz
+  hijacked "the"→"%", tilted "we"→"2" on corner-dense layouts)
+- `231cb041b` swipe_typing_enabled gates every word route (silent letter loss
+  with swipe off + short gestures on)
+- `8ff63d5fe` Max Distance slider = the boundary; false "200%=OFF" retired
+- `7b9f29297` Minimum Swipe Distance description = word-candidacy role
+- `ff6566c1c` return-trip word rescue ("pop"/"lol" ended as first-letter tap)
+- `40f44d725` touch-up candidacy includes 2nd key registered on final sample
+- `4a277fdfc` spec Threshold Logic corrected; swipe_dist_px wide-key cap KEPT
+  (audit removal plan reversed — load-bearing for backspace/shift/space)
+- `5a7948f25` + `f72e1f031` dead recognizers deleted (SwipeGestureRecognizer,
+  ContinuousSwipeGestureRecognizer, LoopGestureDetector, SwipeDetector +
+  18 dead tests)
+- `0bc735743` Config initializers bound to Defaults consts
+
+**Verification round (2026-06-11):** `374292763` calibration activity was
+treating the % prefs as raw px (practice pad ~2× off, divergent slider
+ranges) — fixed to engine units; `971ef126a` T12 guard: custom mappings beat
+word candidacy (13/13 routing tests); `8ee1d0833` spec tables' fictional
+`circle_gesture_enabled` replaced with real `circle_sensitivity`, swipe_dist
+slider description now states its two live roles.
+
+**Race fix (2026-06-11):** `3a947623f` — the full-suite run failed the new
+custom-mapping guard test, exposing a REAL lost-update race in
+ShortSwipeCustomizationManager: mutators updated mappingCache outside
+fileMutex, so a mapping saved during the IME's init-time loadMappings could be
+erased by its clear() and the loss persisted (importFromJson, the live
+backup-restore path, had no locking at all; importFromMappings self-deadlocked
+— dormant, zero callers). Fixed via saveMappingsLocked + mutex around every
+mutation. Sentinel: customMapping_beatsWordCandidate under full-suite load.
+Final verification: full instrumented suite 1299/1299, 0 failures/flakes.
+
+**Unit-safety round (2026-06-11):** `23798a370` GesturePrefAccessDriftTest
+(forbids raw gesture-pref reads outside canonical layers; caught calibration's
+bypass) ; `d2f2f4a4d` fixed 3 latent px-vs-% comparisons (deferred nav-subkey,
+deferred backspace, selection-delete entry — triggered at ~half intended
+displacement) via shared `shortGestureMinDistancePx()` ; `3fd1cb249`
+PercentOfKey value class (Units.kt) — px-vs-% now uncompilable, à la Compose Dp.
+
+**Deliberate non-fixes:** MAX_POINT_INTERVAL_MS=500 still hardcoded (config
+candidate); GestureClassifier's keyWidth/2-or-time terms are near-vestigial
+(hasLeftStartingKey dominates for real gestures) — simplification candidate;
+~30°-tilted 2-key words still hit exact-corner subkeys (irreducible — same
+angle as a deliberate corner flick); T3's 8px boundary margin (theoretical
+fragility only); selection-delete entry threshold change has no dedicated
+behavioral test (type system + drift test are the guards). NOT PUSHED.
+
 ## 🔜 Backup/Restore — next steps (priority order)
 
 Tracking what remains after the round-3-to-6 import-preview polish work.

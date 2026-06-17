@@ -110,10 +110,21 @@ open class ImprovedSwipeGestureRecognizer {
         
         val now = System.currentTimeMillis()
         val timeSinceLastPoint = now - _lastPointTime
-        
-        // Fix timestamp issues - ignore invalid time deltas
-        if (timeSinceLastPoint <= 0 || timeSinceLastPoint > MAX_POINT_INTERVAL_MS) {
-            return // Skip this point if timing is invalid
+
+        // Duplicate or backward timestamp - skip without moving the anchor.
+        if (timeSinceLastPoint <= 0) {
+            return
+        }
+        // Long pause mid-gesture (e.g. a slow/deliberate swiper holding still to aim).
+        // Re-anchor the timing to NOW and skip just this resume sample. _lastPointTime is
+        // only advanced for accepted points, so WITHOUT this re-anchor a single
+        // >MAX_POINT_INTERVAL_MS gap leaves _lastPointTime stale, every subsequent sample's
+        // delta grows even larger, and the rest of the swipe is dropped -- permanently
+        // starving key/path registration (the "slow swipe never triggers" bug). The next
+        // sample resumes normally; skipping this one avoids a pause-spanning path segment.
+        if (timeSinceLastPoint > MAX_POINT_INTERVAL_MS) {
+            _lastPointTime = now
+            return
         }
         
         val lastRawPoint = _rawPath.last()
@@ -139,7 +150,10 @@ open class ImprovedSwipeGestureRecognizer {
         val smoothedPoint = applySmoothing(x, y)
         _smoothedPath.add(smoothedPoint)
         
-        // Check if this should be considered swipe typing
+        // Check if this should be considered swipe typing.
+        // NOTE: this runs BEFORE registerKeyWithFiltering below, so a key registered by
+        // THIS sample is not seen until the next sample's promotion check. Touch-up paths
+        // that need candidacy including the final sample use promoteWordCandidacy().
         if (!_isSwipeTyping && _totalDistance > MIN_SWIPE_DISTANCE) {
             _isSwipeTyping = shouldConsiderSwipeTyping()
         }
@@ -447,6 +461,20 @@ open class ImprovedSwipeGestureRecognizer {
      * Check if currently swipe typing
      */
     fun isSwipeTyping(): Boolean {
+        return _isSwipeTyping
+    }
+
+    /**
+     * Word candidacy for touch-up decisions, INCLUDING a key registered on the final
+     * sample. addPoint's promotion check runs before that sample's key registration, so a
+     * gesture ending exactly as it enters its 2nd key never promotes mid-move. This runs
+     * the same promotion once more and persists it, so the downstream
+     * onSwipeEnd -> isSwipeTyping() check agrees. Mirrors endSwipe's own re-evaluation.
+     */
+    fun promoteWordCandidacy(): Boolean {
+        if (!_isSwipeTyping && _touchedKeys.size >= 2 && _totalDistance > MIN_SWIPE_DISTANCE) {
+            _isSwipeTyping = shouldConsiderSwipeTyping()
+        }
         return _isSwipeTyping
     }
 
