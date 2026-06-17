@@ -234,6 +234,18 @@ class NeuralLayoutHelper(
         val keyPositions = extractKeyPositionsFromLayout()
 
         if (keyPositions != null && keyPositions.isNotEmpty()) {
+            // Only (re)calibrate on the alphabetic letter layout. Numpad / symbol /
+            // greekmath "special" layouts still expose Char keys (digits, punctuation),
+            // so extraction yields a non-empty map WITHOUT q/m. Pushing that would
+            // overwrite the real QWERTY key map (and LayoutWarp's anchors) while leaving
+            // the Y-bounds stale — misencoding the next swipe a row off. Skip and keep
+            // the last good letter-layout calibration; returning to a letter layout
+            // recalibrates via Keyboard2View.onSizeChanged().
+            if (!keyPositions.containsKey('q') || !keyPositions.containsKey('m')) {
+                Log.d(TAG, "Skipping neural recalibration: non-letter layout (no q/m); keeping previous calibration")
+                return
+            }
+
             _predictionCoordinator.getNeuralEngine()!!.setRealKeyPositions(keyPositions)
             Log.d(TAG, "Set ${keyPositions.size} key positions on neural engine")
 

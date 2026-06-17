@@ -1201,6 +1201,25 @@ class Keyboard2View @JvmOverloads constructor(
         vibrate(event)
     }
 
+    /**
+     * Recalibrate neural swipe geometry whenever the keyboard's pixel size
+     * changes — layout hot-swap, orientation, fold, or height-pref change.
+     *
+     * The neural SwipeTrajectoryProcessor caches key positions + QWERTY Y-bounds
+     * captured at the OLD size (the original calibration listener removes itself
+     * after first success). Without re-pushing, a taller/shorter new layout makes
+     * swipes encode a row too high/low. Cheap (reflection + ~40-key loop), fires
+     * only on a real size change, and is gated to letter layouts inside
+     * setNeuralKeyboardLayout() so numpad/symbol layouts keep the last good
+     * calibration.
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0 && (w != oldw || h != oldh)) {
+            _keyboard2?.onKeyboardGeometryChanged()
+        }
+    }
+
     override fun onMeasure(wSpec: Int, hSpec: Int) {
         val keyboard = _keyboard
         if (keyboard == null) {

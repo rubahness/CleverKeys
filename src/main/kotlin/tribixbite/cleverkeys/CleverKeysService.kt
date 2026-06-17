@@ -944,6 +944,19 @@ class CleverKeysService : InputMethodService(),
         _receiver?.handle_event_key(event)
     }
 
+    /**
+     * Re-push key positions + QWERTY bounds to the neural engine after the
+     * keyboard view's pixel size changes (layout hot-swap / orientation / fold /
+     * height-pref change). Invoked from [Keyboard2View.onSizeChanged]. Recalibration
+     * is gated to letter layouts inside the helper, so numpad/symbol layouts keep
+     * the last good calibration.
+     */
+    fun onKeyboardGeometryChanged() {
+        if (::_neuralLayoutBridge.isInitialized) {
+            _neuralLayoutBridge.setNeuralKeyboardLayout()
+        }
+    }
+
     // Neural Layout Methods (v1.32.407: Delegated to NeuralLayoutBridge)
     private fun calculateDynamicKeyboardHeight(): Float {
         return _neuralLayoutBridge.calculateDynamicKeyboardHeight()
