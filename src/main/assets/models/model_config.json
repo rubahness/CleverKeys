@@ -1,6 +1,7 @@
 {
   "meta": {
-    "accuracy": "0.7337",
+    "layout": "colemak",
+    "accuracy": "0.910",
     "d_model": 256,
     "nhead": 8,
     "num_encoder_layers": 6,

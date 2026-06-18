@@ -6,8 +6,8 @@ import android.graphics.PointF
  * Per-key layout warp for swipe typing (separable piecewise-linear).
  *
  * Maps raw touch coordinates from the user's ACTUAL key layout into the model's
- * canonical QWERTY normalized [0,1] space, so the QWERTY-trained ONNX swipe model
- * works on offset / scaled / per-row-shifted layouts.
+ * canonical Colemak normalized [0,1] space (KeyboardGrid), so the Colemak-trained
+ * ONNX swipe model works on offset / scaled / per-row-shifted layouts.
  *
  * WHY THIS EXISTS
  * ---------------
@@ -32,17 +32,17 @@ import android.graphics.PointF
  * between, and sensibly extrapolated at the edges (no IDW convex-hull flattening).
  *
  * SCOPE: this is a separable deformation warp — it corrects horizontal offset/scale
- * (per row) and vertical offset/scale. That covers offset/scaled/shifted QWERTY
- * (e.g. this layout). It assumes the physical rows still hold QWERTY's row
- * assignment (q-row on top, a-row middle, z-row bottom). True key *rearrangements*
- * (AZERTY: a/q/w/z/m swapped between rows) are NOT separable and need a 2D scattered
- * warp (triangulation/TPS) instead — out of scope here.
+ * (per row) and vertical offset/scale. That covers offset/scaled/shifted layouts
+ * that keep the same row assignment. It assumes the physical rows still hold the
+ * canonical Colemak row membership (qwfpgjluy on top, arstdhneio middle, zxcvbkm
+ * bottom). True key *rearrangements* across rows are NOT separable and need a 2D
+ * scattered warp (triangulation/TPS) instead — out of scope here.
  *
  * STATUS: prototype. Needs on-device testing and a yOffset check (see `apply`).
  */
 object LayoutWarp {
 
-    private val ROWS = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+    private val ROWS = arrayOf("qwfpgjluy", "arstdhneio", "zxcvbkm")
     private val CANON_ROW_Y = floatArrayOf(1f / 6f, 0.5f, 5f / 6f)
 
     /**

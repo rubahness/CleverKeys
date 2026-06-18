@@ -269,13 +269,14 @@ android {
       // Note: If no signingConfig, APK is unsigned (requires manual signing)
     }
     debug {
-      // Separate applicationId so debug builds coexist with the prod-signed app
-      // and never overwrite/wipe its data on install.
-      applicationIdSuffix '.debug'
+      // Colemak POC build: distinct applicationId (tribixbite.cleverkeys.colemak)
+      // so it installs alongside BOTH the prod app (tribixbite.cleverkeys) and the
+      // standard debug build (tribixbite.cleverkeys.debug) without clobbering either.
+      applicationIdSuffix '.colemak'
       minifyEnabled false
       shrinkResources false
       debuggable true
-      resValue "string", "app_name", "CleverKeys (Debug)"
+      resValue "string", "app_name", "CleverKeys-Colemak"
       resValue "bool", "debug_logs", "true"
       buildConfigField "boolean", "ENABLE_VERBOSE_LOGGING", "true"
       signingConfig signingConfigs.debug

@@ -3,30 +3,36 @@ package tribixbite.cleverkeys
 import android.graphics.PointF
 
 /**
- * QWERTY keyboard grid matching Python KeyboardGrid exactly.
+ * Colemak keyboard grid — the canonical normalized [0,1] space the swipe model
+ * was trained in. MUST match the training corpus geometry
+ * (colemak_swipe_corpus/device_colemak_geometry.json, derived from a 378x215 px
+ * surface with a 36 px key pitch).
  *
  * Uses normalized [0,1] coordinates with:
- * - 3 rows (height = 1/3 each)
- * - 10 keys per row width (key_w = 0.1)
- * - Row offsets: top=0.0, mid=0.05, bot=0.15
+ * - 3 rows, centers at y = 1/6, 1/2, 5/6
+ * - horizontal key pitch = 36/378 ≈ 0.09524
+ * - Colemak rows:  qwfpgjluy / arstdhneio / zxcvbkm
+ * - first-key centers per row: 18/378, 36/378, 54/378 px (the row stagger)
  *
- * This grid is used for nearest key detection during swipe typing.
- * The model was trained on this specific layout, so inference must match.
+ * This grid is used for nearest-key detection during swipe typing AND as the
+ * canonical target space for LayoutWarp, so inference must match training.
  */
 object KeyboardGrid {
 
-    // Key dimensions in normalized space
-    private const val KEY_WIDTH = 0.1f      // 1/10
-    private const val ROW_HEIGHT = 1f / 3f  // 3 rows
+    // Horizontal key pitch in normalized space (36 px on a 378 px surface).
+    private const val KEY_PITCH = 36f / 378f   // ≈ 0.095238
+    private const val ROW_HEIGHT = 1f / 3f     // 3 rows; centers at 1/6, 1/2, 5/6
 
-    // Row definitions
-    private val ROW_0 = "qwertyuiop"  // 10 keys, offset 0.0
-    private val ROW_1 = "asdfghjkl"   // 9 keys, offset 0.05
-    private val ROW_2 = "zxcvbnm"     // 7 keys, offset 0.15
+    // Colemak row definitions (top -> bottom)
+    private val ROW_0 = "qwfpgjluy"   // 9 keys
+    private val ROW_1 = "arstdhneio"  // 10 keys
+    private val ROW_2 = "zxcvbkm"     // 7 keys
 
-    private val ROW_0_OFFSET = 0.0f
-    private val ROW_1_OFFSET = 0.05f
-    private val ROW_2_OFFSET = 0.15f
+    // Normalized x of each row's FIRST key center (the keyboard stagger):
+    // 18/378, 36/378, 54/378 px — straight from device_colemak_geometry.json.
+    private const val ROW_0_X0 = 18f / 378f   // ≈ 0.04762
+    private const val ROW_1_X0 = 36f / 378f   // ≈ 0.09524
+    private const val ROW_2_X0 = 54f / 378f   // ≈ 0.14286
 
     // Pre-computed key centers for fast lookup
     private val keyPositions: Map<Char, PointF> = buildKeyPositions()
@@ -34,23 +40,23 @@ object KeyboardGrid {
     private fun buildKeyPositions(): Map<Char, PointF> {
         val positions = mutableMapOf<Char, PointF>()
 
-        // Row 0: qwertyuiop
+        // Row 0: qwfpgjluy  (y center = 1/6)
         for (i in ROW_0.indices) {
-            val cx = ROW_0_OFFSET + i * KEY_WIDTH + KEY_WIDTH / 2f
+            val cx = ROW_0_X0 + i * KEY_PITCH
             val cy = 0f * ROW_HEIGHT + ROW_HEIGHT / 2f
             positions[ROW_0[i]] = PointF(cx, cy)
         }
 
-        // Row 1: asdfghjkl
+        // Row 1: arstdhneio  (y center = 1/2)
         for (i in ROW_1.indices) {
-            val cx = ROW_1_OFFSET + i * KEY_WIDTH + KEY_WIDTH / 2f
+            val cx = ROW_1_X0 + i * KEY_PITCH
             val cy = 1f * ROW_HEIGHT + ROW_HEIGHT / 2f
             positions[ROW_1[i]] = PointF(cx, cy)
         }
 
-        // Row 2: zxcvbnm
+        // Row 2: zxcvbkm  (y center = 5/6)
         for (i in ROW_2.indices) {
-            val cx = ROW_2_OFFSET + i * KEY_WIDTH + KEY_WIDTH / 2f
+            val cx = ROW_2_X0 + i * KEY_PITCH
             val cy = 2f * ROW_HEIGHT + ROW_HEIGHT / 2f
             positions[ROW_2[i]] = PointF(cx, cy)
         }
