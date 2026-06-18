@@ -51,13 +51,6 @@ class SwipeCalibrationActivity : Activity() {
 
         // Calibration settings
         private const val WORDS_PER_SESSION = 20
-
-        // QWERTY layout
-        private val KEYBOARD_LAYOUT = arrayOf(
-            arrayOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-            arrayOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
-            arrayOf("z", "x", "c", "v", "b", "n", "m")
-        )
     }
 
     // Full vocabulary for random word selection
@@ -92,6 +85,11 @@ class SwipeCalibrationActivity : Activity() {
     private lateinit var neuralEngine: NeuralSwipeTypingEngine
     private lateinit var config: Config
 
+    // The user's REAL selected layout (e.g. Colemak). The calibration keyboard renders
+    // and scores on THIS geometry instead of a hardcoded QWERTY mock.
+    private var calibrationLayout: KeyboardData? = null
+    private var layoutDisplayName: String = "Keyboard"
+
     // Calibration state
     private var currentIndex = 0
     private lateinit var currentWord: String
@@ -124,6 +122,12 @@ class SwipeCalibrationActivity : Activity() {
         val prefs = DirectBootAwarePreferences.get_shared_preferences(this)
         Config.initGlobalConfig(prefs, resources, null, false)
         config = Config.globalConfig()
+
+        // Load the user's actual selected layout so calibration matches the real keyboard.
+        calibrationLayout = loadSelectedLayout()
+        layoutDisplayName = calibrationLayout?.name?.takeIf { it.isNotBlank() } ?: "Keyboard"
+        Log.d(TAG, "Calibration layout: $layoutDisplayName (${calibrationLayout?.rows?.size ?: 0} rows)")
+
         neuralEngine = NeuralSwipeTypingEngine(this, config)
         // Set up logging callback for neural engine
         neuralEngine.setDebugLogger { message -> logToResults(message) }
@@ -294,6 +298,44 @@ class SwipeCalibrationActivity : Activity() {
         }
     }
 
+    /**
+     * Load the user's actually-selected keyboard layout (the same source the IME uses),
+     * so the calibration keyboard matches what they really type on. Falls back to loading
+     * the Colemak (then QWERTY) layout resource directly if the live config has none.
+     */
+    private fun loadSelectedLayout(): KeyboardData? {
+        try {
+            val fromConfig = config.layouts.firstOrNull { it != null }
+            if (fromConfig != null) {
+                Log.d(TAG, "Using configured layout: ${fromConfig.name}")
+                return fromConfig
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "config.layouts unavailable, falling back to resource load: ${e.message}")
+        }
+        for (name in listOf("latn_colemak", "latn_qwerty_us")) {
+            val id = resources.getIdentifier(name, "raw", packageName)
+            if (id != 0) {
+                KeyboardData.load(resources, id)?.let {
+                    Log.d(TAG, "Loaded fallback layout resource: $name")
+                    return it
+                }
+            }
+        }
+        Log.e(TAG, "Failed to load any calibration layout")
+        return null
+    }
+
+    /** Main character of a key (key0), or null for non-character keys (shift, backspace...). */
+    private fun mainCharOf(key: KeyboardData.Key): Char? {
+        val kv = key.keys.getOrNull(0) ?: return null
+        return try {
+            if (kv.getKind() == KeyValue.Kind.Char) kv.getChar() else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun setupUI() {
         // Main RelativeLayout like original
         val mainLayout = RelativeLayout(this)
@@ -311,7 +353,7 @@ class SwipeCalibrationActivity : Activity() {
 
         // Title
         val title = TextView(this)
-        title.text = "🧠 Gesture Typing Calibration"
+        title.text = "🧠 $layoutDisplayName Gesture Calibration"
         title.textSize = 24f
         title.setTextColor(0xFF00d4ff.toInt()) // Neon blue
         title.setPadding(0, 0, 0, 20)
@@ -731,7 +773,9 @@ class SwipeCalibrationActivity : Activity() {
     }
 
     /**
-     * Restored keyboard view with proper 4-row QWERTY layout and touch handling
+     * Calibration keyboard view. Renders the user's REAL selected layout
+     * (calibrationLayout) using the same layout-units->pixels mapping as the live
+     * keyboard, and feeds the neural engine the same key geometry it sees in production.
      */
     private inner class NeuralKeyboardView(context: Context) : View(context) {
         private val keyPaint: Paint
@@ -740,6 +784,9 @@ class SwipeCalibrationActivity : Activity() {
         private val swipePaint: Paint
         private val overlayPaint: Paint
         private val keys = HashMap<String, KeyButton>()
+        // Full-cell letter centers (the model's geometry anchors), kept separate from the
+        // visually-inset KeyButton rects so the engine sees the exact production geometry.
+        private var letterCenters: Map<Char, PointF> = emptyMap()
         private val swipePath = Path()
         private var overlayPath: Path? = null
         private val swipePoints = ArrayList<PointF>()
@@ -793,121 +840,75 @@ class SwipeCalibrationActivity : Activity() {
             super.onSizeChanged(w, h, oldw, oldh)
             layoutKeys(w, h)
 
-            // Update neural engine with keyboard dimensions and key positions
+            // Feed the neural engine the SAME geometry production uses: real layout
+            // dimensions + full-cell letter centers (LayoutWarp warps these into the
+            // model's canonical Colemak space) + the q..m vertical band for Y-normalization
+            // (mirrors NeuralLayoutHelper.setNeuralKeyboardLayout()).
             neuralEngine.setKeyboardDimensions(w.toFloat(), h.toFloat())
+            if (letterCenters.isNotEmpty()) {
+                neuralEngine.setRealKeyPositions(HashMap(letterCenters))
 
-            val keyPositions = HashMap<Char, PointF>()
-            for ((keyStr, button) in keys) {
-                if (keyStr.length == 1) {
-                    val keyChar = keyStr[0]
-                    keyPositions[keyChar] = PointF(
-                        button.x + button.width / 2,
-                        button.y + button.height / 2
-                    )
+                val q = letterCenters['q']
+                val m = letterCenters['m']
+                if (q != null && m != null) {
+                    val rowHeight = (m.y - q.y) / 2f      // q is top row, m is bottom row
+                    var top = q.y - rowHeight / 2f
+                    var bandHeight = 3f * rowHeight
+                    if (top < 0f) {
+                        bandHeight += top
+                        top = 0f
+                    }
+                    neuralEngine.setQwertyAreaBounds(top, bandHeight)
                 }
             }
-            neuralEngine.setRealKeyPositions(keyPositions)
         }
 
         private fun layoutKeys(width: Int, height: Int) {
             keys.clear()
+            letterCenters = emptyMap()
 
-            // Use user's configuration for dimensions
-            val keyWidth = width / 10f
-            val rowHeight = height / 4f // 4 rows including bottom row
-            val verticalMargin = keyVerticalMargin * rowHeight
-            val horizontalMargin = keyHorizontalMargin * keyWidth
-
-            // Calculate text size using actual config values
-            val characterSizeVal = characterSize
-            val labelTextSizeVal = labelTextSize
-
-            // Match the real keyboard's text size calculation
-            val baseSize = minOf(
-                rowHeight - verticalMargin,
-                (keyWidth - horizontalMargin) * 3f / 2f
-            )
-            val textSize = baseSize * characterSizeVal * labelTextSizeVal
-            textPaint.textSize = textSize
-
-            // Layout QWERTY keyboard with 4 rows
-            val fullLayout = arrayOf(
-                arrayOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"),
-                arrayOf("a", "s", "d", "f", "g", "h", "j", "k", "l"),
-                arrayOf("shift", "z", "x", "c", "v", "b", "n", "m", "backspace"),
-                arrayOf("?123", ",", "space", ".", "enter")
-            )
-
-            for (row in fullLayout.indices) {
-                val rowKeys = fullLayout[row]
-
-                when (row) {
-                    0 -> { // Top row (q-p)
-                        for (col in rowKeys.indices) {
-                            val key = rowKeys[col]
-                            val x = col * keyWidth + horizontalMargin / 2
-                            val y = row * rowHeight + verticalMargin / 2
-
-                            val button = KeyButton(key, x, y,
-                                keyWidth - horizontalMargin, rowHeight - verticalMargin)
-                            keys[key] = button
-                        }
-                    }
-                    1 -> { // Second row (a-l) - offset by half key
-                        val rowOffset = keyWidth * 0.5f
-                        for (col in rowKeys.indices) {
-                            val key = rowKeys[col]
-                            val x = rowOffset + col * keyWidth + horizontalMargin / 2
-                            val y = row * rowHeight + verticalMargin / 2
-
-                            val button = KeyButton(key, x, y,
-                                keyWidth - horizontalMargin, rowHeight - verticalMargin)
-                            keys[key] = button
-                        }
-                    }
-                    2 -> { // Third row (shift, z-m, backspace)
-                        var currentX = horizontalMargin / 2
-                        for (col in rowKeys.indices) {
-                            val key = rowKeys[col]
-                            var keyW = keyWidth - horizontalMargin
-
-                            // Special keys are wider
-                            if (key == "shift" || key == "backspace") {
-                                keyW = keyWidth * 1.5f - horizontalMargin
-                            }
-
-                            val y = row * rowHeight + verticalMargin / 2
-
-                            val button = KeyButton(key, currentX, y,
-                                keyW, rowHeight - verticalMargin)
-                            keys[key] = button
-
-                            currentX += keyW + horizontalMargin
-                        }
-                    }
-                    3 -> { // Bottom row (?123, comma, space, period, enter)
-                        var currentX = horizontalMargin / 2
-                        for (col in rowKeys.indices) {
-                            val key = rowKeys[col]
-                            var keyW = keyWidth - horizontalMargin
-
-                            // Special key widths
-                            when (key) {
-                                "space" -> keyW = keyWidth * 5f - horizontalMargin // Space bar is 5 keys wide
-                                "?123", "enter" -> keyW = keyWidth * 1.5f - horizontalMargin
-                            }
-
-                            val y = row * rowHeight + verticalMargin / 2
-
-                            val button = KeyButton(key, currentX, y,
-                                keyW, rowHeight - verticalMargin)
-                            keys[key] = button
-
-                            currentX += keyW + horizontalMargin
-                        }
-                    }
-                }
+            val kb = calibrationLayout
+            if (kb == null || kb.rows.isEmpty()) {
+                Log.e(TAG, "No calibration layout to render")
+                return
             }
+
+            // Layout-units -> pixels, EXACTLY as the real keyboard + neural engine map them
+            // (NeuralLayoutHelper.extractKeyPositionsFromLayout): full-cell centers, no margin,
+            // walking every key (incl. spacers like shift/backspace) so positions stay faithful.
+            val scaleX = width.toFloat() / kb.keysWidth
+            val scaleY = height.toFloat() / kb.keysHeight
+
+            textPaint.textSize = minOf(scaleX, scaleY) * 0.5f
+            val hInset = keyHorizontalMargin * scaleX
+            val vInset = keyVerticalMargin * scaleY
+
+            val centers = HashMap<Char, PointF>()
+            var currentY = 0f
+            for (row in kb.rows) {
+                currentY += row.shift * scaleY
+                val rowH = row.height * scaleY
+                var currentX = 0f
+                for (key in row.keys) {
+                    currentX += key.shift * scaleX
+                    val keyW = key.width * scaleX
+                    val c = mainCharOf(key)
+                    if (c != null) {
+                        // Full-cell center is the model anchor; the drawn rect is inset for a gap.
+                        centers[c] = PointF(currentX + keyW / 2f, currentY + rowH / 2f)
+                        keys[c.toString()] = KeyButton(
+                            c.uppercaseChar().toString(),
+                            currentX + hInset / 2f,
+                            currentY + vInset / 2f,
+                            keyW - hInset,
+                            rowH - vInset
+                        )
+                    }
+                    currentX += keyW
+                }
+                currentY += rowH
+            }
+            letterCenters = centers
         }
 
         override fun onDraw(canvas: Canvas) {
