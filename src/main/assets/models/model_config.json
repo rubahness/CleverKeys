@@ -1,7 +1,9 @@
 {
   "meta": {
     "layout": "colemak",
-    "accuracy": "0.910",
+    "accuracy": "0.873",
+    "model_version": "v4-calibrated",
+    "note": "synthetic val 0.873; held-out real-capture word-acc 0.454 (0.597 decodable). Corpus calibrated to 562 real S25 captures (near-straight-thumb-v4).",
     "d_model": 256,
     "nhead": 8,
     "num_encoder_layers": 6,
