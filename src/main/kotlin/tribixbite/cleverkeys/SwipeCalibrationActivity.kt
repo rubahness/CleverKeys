@@ -131,6 +131,12 @@ class SwipeCalibrationActivity : Activity() {
         neuralEngine = NeuralSwipeTypingEngine(this, config)
         // Set up logging callback for neural engine
         neuralEngine.setDebugLogger { message -> logToResults(message) }
+        // This is the calibration/diagnostic screen — always emit the rich per-swipe
+        // debug blocks (detected keys, feature values, raw beam output before vocab
+        // filtering). Those are gated behind debugModeActive, which the live IME path
+        // flips via DebugModePropagator but this activity otherwise never sets, so the
+        // detailed logs were suppressed here even with the debug settings toggled on.
+        neuralEngine.setDebugModeActive(true)
 
         try {
             neuralEngine.initialize()

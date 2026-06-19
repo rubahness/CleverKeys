@@ -1121,10 +1121,15 @@ class Config private constructor(
         @JvmStatic
         fun isSwipeTypingSupportedForLayout(name: String?, script: String?): Boolean {
             if (name == null || script == null) return false
-            // Must be Latin script (exclude Greek/Georgian QWERTY) AND
-            // must be a QWERTY variant (exclude Dvorak, Colemak, AZERTY, QWERTZ, etc.)
-            return script.equals("latin", ignoreCase = true) &&
-                   name.contains("QWERTY", ignoreCase = true)
+            // Must be Latin script (exclude Greek/Georgian QWERTY).
+            if (!script.equals("latin", ignoreCase = true)) return false
+            // Allowlist of layouts whose key topology matches the shipped ONNX model.
+            // NOTE: this branch ships a COLEMAK-trained model (swipe_*_android.onnx),
+            // so Colemak is the supported layout here; QWERTY stays listed for the
+            // stock model. Other layouts (Dvorak, AZERTY, QWERTZ, …) default to
+            // swipe-disabled until a matching model ships. #9
+            return name.contains("QWERTY", ignoreCase = true) ||
+                   name.contains("Colemak", ignoreCase = true)
         }
 
         @Volatile
